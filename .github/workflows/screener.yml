@@ -1,0 +1,68 @@
+name: 스크리너 데이터 갱신
+
+on:
+  schedule:
+    - cron: "40 7 * * 1-5"   # 평일 16:40 KST - 종가 반영 (주가만 갱신)
+    - cron: "0 18 * * 6"     # 일요일 03:00 KST - 재무(신규 보고서만) + 1층 검사 + 주가
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드"
+        type: choice
+        options: [all, prices, financials, checks]
+        default: all
+      force:
+        description: "이미 수집한 종목도 전부 다시 수집"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screener
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 모드 결정
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.force }}" = "true" ]; then echo "extra=--force" >> "$GITHUB_OUTPUT"; fi
+          elif [ "${{ github.event.schedule }}" = "0 18 * * 6" ]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=prices" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 데이터 수집
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        run: python scripts/screener.py --mode ${{ steps.mode.outputs.mode }} ${{ steps.mode.outputs.extra }}
+
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data docs/data
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "데이터 갱신 $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') KST"
+            git push
+          fi

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F3A5F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="가치스캐너">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<title>국내 가치 스캐너</title>
+<style>
+:root{
+  --bg:#F3F5F8; --surface:#FFFFFF; --ink:#17212B; --muted:#5E6B7A; --line:#DDE3EA;
+  --brand:#1F3A5F; --brand-soft:#E4EBF4; --up:#D63B3F; --down:#2F6FC6; --warn:#B7791F; --ok:#1E7F5C;
+  --radius-lg:20px; --radius-sm:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0F1620; --surface:#18222E; --ink:#E6ECF2; --muted:#93A1B1; --line:#2A3746;
+    --brand:#8FB3E0; --brand-soft:#223246; --up:#FF6B6E; --down:#6FA4F0; --warn:#E3B04B; --ok:#5FD3A5;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Pretendard Variable",Pretendard,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  font-size:15px; line-height:1.5; font-feature-settings:"tnum";
+  padding:env(safe-area-inset-top) 0 calc(24px + env(safe-area-inset-bottom));
+}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.wrap{max-width:560px;margin:0 auto;padding:0 16px}
+
+header{display:flex;align-items:center;justify-content:space-between;padding:18px 0 12px}
+header h1{font-size:17px;font-weight:700;margin:0;letter-spacing:-.01em}
+.icon-btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600}
+
+/* 조건 문장: 이 화면의 중심 */
+.query{background:var(--brand);color:#fff;border-radius:var(--radius-lg);padding:22px 20px 18px}
+@media (prefers-color-scheme: dark){.query{background:#1B3150}}
+.query p{margin:0;font-size:21px;line-height:1.75;font-weight:600;letter-spacing:-.02em}
+.slot{display:inline-flex;align-items:center;gap:2px;background:rgba(255,255,255,.14);border-radius:12px;padding:0 4px;margin:0 2px;vertical-align:middle}
+.slot button{background:none;border:0;color:#fff;width:30px;height:34px;font-size:20px;line-height:1;opacity:.85}
+.slot output{min-width:2.2ch;text-align:center;font-weight:800;font-size:22px}
+.toggle-word{background:rgba(255,255,255,.14);border:0;border-radius:12px;padding:2px 10px;font-weight:800;color:#fff;font-size:21px}
+.query .foot{display:flex;justify-content:space-between;align-items:baseline;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.2)}
+.count{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1}
+.count small{font-size:16px;font-weight:600;margin-left:4px}
+.basis{font-size:12px;opacity:.8;text-align:right}
+
+/* 세부 설정 */
+details.more{margin-top:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm)}
+details.more summary{padding:12px 14px;font-weight:600;font-size:14px;list-style:none;display:flex;justify-content:space-between}
+details.more summary::-webkit-details-marker{display:none}
+details.more summary::after{content:"열기";color:var(--muted);font-weight:500}
+details.more[open] summary::after{content:"닫기"}
+.opts{padding:4px 14px 14px;display:grid;gap:12px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.row label{font-size:14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:none;padding:6px 12px;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--brand);color:var(--surface);font-weight:700}
+@media (prefers-color-scheme: dark){.seg button[aria-pressed="true"]{color:#0F1620}}
+input[type=number]{width:96px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);text-align:right}
+.switch{appearance:none;width:44px;height:26px;border-radius:999px;background:var(--line);position:relative;transition:background .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s}
+.switch:checked{background:var(--brand)}
+.switch:checked::after{left:21px}
+.hint{font-size:12px;color:var(--muted);margin:0}
+
+/* 정렬과 검색 */
+.tools{display:flex;gap:8px;margin:16px 0 8px;align-items:center}
+.tools input{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+.tools select{padding:9px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+
+/* 결과 목록 */
+ol.list{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm)}
+ol.list li+li{border-top:1px solid var(--line)}
+.item{width:100%;text-align:left;background:none;border:0;padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:2px 12px}
+.name{font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{font-size:11px;font-weight:600;color:var(--muted);margin-left:6px}
+.per{grid-row:span 2;align-self:center;text-align:right;font-weight:800;font-size:20px}
+.per span{display:block;font-size:11px;font-weight:500;color:var(--muted)}
+.sub{font-size:13px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.pos{color:var(--up)} .neg{color:var(--down)}
+.detail{padding:0 14px 14px}
+.detail table{width:100%;border-collapse:collapse;font-size:13px}
+.detail td{padding:5px 0;border-bottom:1px dashed var(--line)}
+.detail td:last-child{text-align:right;font-weight:600}
+.detail .links{display:flex;gap:8px;margin-top:10px}
+.detail a{flex:1;text-align:center;padding:9px;border-radius:8px;background:var(--brand-soft);color:var(--ink);text-decoration:none;font-weight:600;font-size:13px}
+.flag{color:var(--warn);font-size:12px;margin-top:8px}
+
+.badge{font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
+.b-p{color:var(--ok)} .b-f{color:var(--up)} .b-u{color:var(--warn)}
+.checks{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.checks h3{font-size:13px;margin:0 0 6px}
+.ck{display:grid;grid-template-columns:22px 78px 1fr auto;gap:6px;align-items:baseline;font-size:13px;padding:3px 0}
+.ck .lbl{font-weight:600}
+.ck .note{color:var(--muted)}
+.ck a{font-size:12px;color:var(--brand);text-decoration:underline;background:none;padding:0}
+.dropped{font-size:12px;opacity:.8;margin-top:2px}
+.state{padding:28px 16px;text-align:center;color:var(--muted)}
+.state strong{display:block;color:var(--ink);margin-bottom:4px}
+.morebtn{display:block;width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);font-weight:600}
+footer{margin-top:20px;font-size:12px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>국내 가치 스캐너</h1>
+    <button class="icon-btn" id="reload" type="button">새로고침</button>
+  </header>
+
+  <section class="query" aria-label="검색 조건">
+    <p>
+      PER
+      <span class="slot"><button type="button" data-step="per" data-d="-1" aria-label="PER 낮추기">−</button><output id="v-per">15</output><button type="button" data-step="per" data-d="1" aria-label="PER 높이기">+</button></span>
+      배 미만,
+      FCF
+      <button type="button" class="toggle-word" id="t-fcf" aria-pressed="true">플러스</button>,
+      매출
+      <span class="slot"><button type="button" data-step="rg" data-d="-1" aria-label="성장률 낮추기">−</button><output id="v-rg">5</output><button type="button" data-step="rg" data-d="1" aria-label="성장률 높이기">+</button></span>
+      % 넘게 성장
+    </p>
+    <div class="foot">
+      <div><div class="count" aria-live="polite"><span id="count">0</span><small>개</small></div><div class="dropped" id="dropped"></div></div>
+      <div class="basis" id="basis">데이터 확인 중</div>
+    </div>
+  </section>
+
+  <details class="more">
+    <summary>세부 조건</summary>
+    <div class="opts">
+      <div class="row">
+        <label>시장</label>
+        <div class="seg" id="market">
+          <button type="button" data-v="ALL" aria-pressed="true">전체</button>
+          <button type="button" data-v="KOSPI" aria-pressed="false">코스피</button>
+          <button type="button" data-v="KOSDAQ" aria-pressed="false">코스닥</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>1층 즉시탈락 검사</label>
+        <div class="seg" id="l1">
+          <button type="button" data-v="ALL" aria-pressed="false">전체</button>
+          <button type="button" data-v="EXF" aria-pressed="true">탈락 제외</button>
+          <button type="button" data-v="PASS" aria-pressed="false">통과만</button>
+        </div>
+      </div>
+      <div class="row">
+        <label for="capmin">시가총액 하한 (억원)</label>
+        <input id="capmin" type="number" inputmode="numeric" min="0" step="100">
+      </div>
+      <div class="row">
+        <label for="exfin">금융·지주 추정 종목 제외</label>
+        <input id="exfin" class="switch" type="checkbox">
+      </div>
+      <div class="row">
+        <label for="fcfy">FCF 수익률 하한 (%)</label>
+        <input id="fcfy" type="number" inputmode="decimal" step="1">
+      </div>
+      <p class="hint">통과만은 7개 항목이 모두 확인된 종목만 보여줘요. 공시를 못 읽은 항목이 있으면 확인 필요로 분류돼요. 금융·지주는 종목명 키워드로 추정한 값이라 일부 누락이나 오분류가 있을 수 있어요. 조건은 이 기기에 저장돼요.</p>
+      <button type="button" class="icon-btn" id="reset">기본 조건으로 되돌리기</button>
+    </div>
+  </details>
+
+  <div class="tools">
+    <input id="q" type="search" placeholder="종목명·코드 검색" aria-label="종목 검색">
+    <select id="sort" aria-label="정렬">
+      <option value="per">PER 낮은 순</option>
+      <option value="rg">매출성장 높은 순</option>
+      <option value="fy">FCF수익률 높은 순</option>
+      <option value="cap">시총 큰 순</option>
+    </select>
+  </div>
+
+  <ol class="list" id="list"></ol>
+  <button type="button" class="morebtn" id="morebtn" hidden>더 보기</button>
+
+  <footer>
+    PER은 시가총액 ÷ 최근 4분기 지배주주순이익, FCF는 최근 4분기 영업활동현금흐름에서 유형자산 취득액을 뺀 값이에요.
+    매출 성장률은 최신 보고서 누적 매출의 전년 동기 대비 증감이에요.
+    1층 검사는 흑자, PER 30배 미만, FCF 플러스 종목만 매주 일요일에 DART 공시로 확인해요. 투자 판단 전 공시 원문을 확인하세요.
+  </footer>
+</div>
+
+<script>
+const DEFAULTS = {per:15, fcf:true, rg:5, market:"ALL", capmin:1000, exfin:true, fcfy:"", sort:"per", l1:"EXF"};
+const KEY = "kvs-conditions-v1";
+let cond = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || "{}"));
+let data = [], meta = null, openCode = null, shown = 50;
+const $ = s => document.querySelector(s);
+
+function save(){ localStorage.setItem(KEY, JSON.stringify(cond)); }
+
+function fmtEok(v){
+  if (v === null || v === undefined) return "없음";
+  const a = Math.abs(v);
+  if (a >= 10000) return (v/10000).toFixed(a >= 100000 ? 0 : 1) + "조";
+  return Math.round(v).toLocaleString("ko-KR") + "억";
+}
+function fmtPct(v){ return v === null || v === undefined ? "없음" : (v > 0 ? "+" : "") + v.toFixed(1) + "%"; }
+function cls(v){ return v > 0 ? "pos" : v < 0 ? "neg" : ""; }
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function syncControls(){
+  $("#v-per").textContent = cond.per;
+  $("#v-rg").textContent = cond.rg;
+  const f = $("#t-fcf");
+  f.textContent = cond.fcf ? "플러스" : "상관없음";
+  f.setAttribute("aria-pressed", cond.fcf);
+  document.querySelectorAll("#market button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === cond.market));
+  document.querySelectorAll("#l1 button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === cond.l1));
+  $("#capmin").value = cond.capmin;
+  $("#exfin").checked = cond.exfin;
+  $("#fcfy").value = cond.fcfy;
+  $("#sort").value = cond.sort;
+}
+
+let droppedCount = 0;
+function filtered(){
+  const q = $("#q").value.trim().toLowerCase();
+  droppedCount = 0;
+  const fyMin = cond.fcfy === "" ? null : Number(cond.fcfy);
+  const out = data.filter(r => {
+    if (r.per === null || r.per >= cond.per) return false;
+    if (cond.fcf && !(r.fcf > 0)) return false;
+    if (r.rg === null || r.rg <= cond.rg) return false;
+    if (cond.market !== "ALL" && r.m !== cond.market) return false;
+    if (cond.capmin && r.cap < Number(cond.capmin)) return false;
+    if (cond.exfin && r.f) return false;
+    if (fyMin !== null && !(r.fy >= fyMin)) return false;
+    if (q && !(r.n.toLowerCase().includes(q) || r.c.includes(q))) return false;
+    if (cond.l1 === "EXF" && r.l1 === "f"){ droppedCount++; return false; }
+    if (cond.l1 === "PASS" && r.l1 !== "p"){ if (r.l1 === "f") droppedCount++; return false; }
+    return true;
+  });
+  const by = {
+    per:(a,b)=>a.per-b.per, rg:(a,b)=>b.rg-a.rg,
+    fy:(a,b)=>(b.fy??-1e9)-(a.fy??-1e9), cap:(a,b)=>b.cap-a.cap
+  }[cond.sort];
+  return out.sort(by);
+}
+
+const MARK = {p:["✅","통과"], f:["❌","탈락"], w:["⚠️","주의"], u:["❔","확인 필요"]};
+const L1TEXT = {p:"1층 통과", f:"1층 탈락", u:"확인 필요"};
+function checksHTML(r){
+  if (!r.ck || !r.ck.length) return "";
+  return `<div class="checks"><h3>1층 즉시탈락 검사</h3>${r.ck.map(([lbl, s, note, no]) => `
+    <div class="ck"><span aria-label="${MARK[s][1]}">${MARK[s][0]}</span><span class="lbl">${esc(lbl)}</span>
+    <span class="note">${esc(note || "")}</span>
+    ${no ? `<a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${encodeURIComponent(no)}" target="_blank" rel="noopener">공시</a>` : "<span></span>"}</div>`).join("")}
+  </div>`;
+}
+
+function detailHTML(r){
+  const flags = [];
+  if (r.per < 3) flags.push("PER이 3배 미만이에요. 일회성 이익이 섞였는지 공시에서 확인하세요.");
+  if (r.f) flags.push("금융·지주로 추정돼요. FCF 해석에 주의하세요.");
+  if (r.capex === 0) flags.push("유형자산 취득액이 잡히지 않았어요. 계정명이 달라 누락됐을 수 있어요.");
+  return `<div class="detail"><table>
+    <tr><td>최근 4분기 매출</td><td>${fmtEok(r.rev)}</td></tr>
+    <tr><td>최근 4분기 영업이익</td><td class="${cls(r.op)}">${fmtEok(r.op)}</td></tr>
+    <tr><td>최근 4분기 지배주주순이익</td><td>${fmtEok(r.ni)}</td></tr>
+    <tr><td>영업활동현금흐름</td><td>${fmtEok(r.ocf)}</td></tr>
+    <tr><td>유형자산 취득</td><td>${fmtEok(r.capex)}</td></tr>
+    <tr><td>FCF</td><td class="${cls(r.fcf)}">${fmtEok(r.fcf)}</td></tr>
+    <tr><td>FCF 수익률</td><td>${fmtPct(r.fy)}</td></tr>
+    <tr><td>재무 기준</td><td>${esc(r.rep || "")} ${esc(r.fs || "")}</td></tr>
+  </table>
+  ${flags.map(f => `<div class="flag">${f}</div>`).join("")}
+  ${checksHTML(r)}
+  <div class="links">
+    <a href="https://m.stock.naver.com/domestic/stock/${r.c}/total" target="_blank" rel="noopener">네이버 증권에서 보기</a>
+    <a href="https://m.stock.naver.com/domestic/stock/${r.c}/finance/annual" target="_blank" rel="noopener">재무 추이 보기</a>
+  </div></div>`;
+}
+
+function render(){
+  const list = $("#list");
+  if (!meta){ return; }
+  if (!data.length){
+    $("#count").textContent = "0";
+    list.innerHTML = `<li class="state"><strong>아직 수집된 데이터가 없어요</strong>GitHub Actions에서 '스크리너 데이터 갱신'을 한 번 실행하면 채워져요.</li>`;
+    $("#morebtn").hidden = true;
+    return;
+  }
+  const rows = filtered();
+  $("#count").textContent = rows.length.toLocaleString("ko-KR");
+  $("#dropped").textContent = droppedCount ? `1층 탈락 ${droppedCount}개 제외됨` : "";
+  if (!rows.length){
+    list.innerHTML = `<li class="state"><strong>조건에 맞는 종목이 없어요</strong>PER 상한을 올리거나 성장률 조건을 낮춰 보세요.</li>`;
+    $("#morebtn").hidden = true;
+    return;
+  }
+  const page = rows.slice(0, shown);
+  list.innerHTML = page.map(r => `
+    <li>
+      <button type="button" class="item" data-code="${r.c}" aria-expanded="${openCode === r.c}">
+        <span class="name">${esc(r.n)}<span class="tag">${r.m === "KOSPI" ? "코스피" : "코스닥"} ${r.c}</span></span>
+        <span class="per">${r.per.toFixed(1)}<span>PER</span></span>
+        <span class="sub">
+          <span>매출 <b class="${cls(r.rg)}">${fmtPct(r.rg)}</b></span>
+          <span>FCF <b class="${cls(r.fcf)}">${fmtEok(r.fcf)}</b></span>
+          <span>시총 ${fmtEok(r.cap)}</span>
+          ${L1TEXT[r.l1] ? `<span class="badge b-${r.l1}">${L1TEXT[r.l1]}${r.l1 === "f" ? " " + r.ck.filter(x => x[1] === "f").length : ""}</span>` : ""}
+        </span>
+      </button>
+      ${openCode === r.c ? detailHTML(r) : ""}
+    </li>`).join("");
+  const btn = $("#morebtn");
+  btn.hidden = rows.length <= shown;
+  btn.textContent = `더 보기 (${(rows.length - shown).toLocaleString("ko-KR")}개 남음)`;
+}
+
+function update(){ shown = 50; save(); syncControls(); render(); }
+
+async function load(){
+  $("#basis").textContent = "불러오는 중";
+  try{
+    const res = await fetch(`data/screen.json?t=${Date.now()}`, {cache:"no-store"});
+    if (!res.ok) throw new Error(res.status);
+    const j = await res.json();
+    const F = j.fields;
+    data = j.rows.map(a => {
+      const o = {}; F.forEach((k,i) => o[k] = a[i]);
+      o.fy = (o.fcf !== null && o.cap > 0) ? Math.round(o.fcf / o.cap * 1000) / 10 : null;
+      return o;
+    });
+    meta = j.meta;
+    if (meta.price_date){
+      const [y, m, dd] = meta.price_date.split("-").map(Number);
+      const wd = "일월화수목금토"[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()];
+      $("#basis").innerHTML = `주가 ${m}/${dd}(${wd}) 종가<br>재무 ${esc(meta.main_report || "")} 기준`;
+    } else {
+      $("#basis").textContent = "데이터 없음";
+    }
+    render();
+  }catch(e){
+    $("#basis").textContent = "불러오기 실패";
+    $("#list").innerHTML = `<li class="state"><strong>데이터 파일을 읽지 못했어요</strong>인터넷 연결을 확인하고 새로고침을 눌러 주세요. 계속되면 GitHub Pages 설정을 확인하세요.</li>`;
+  }
+}
+
+document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click", () => {
+  const k = b.dataset.step, d = Number(b.dataset.d);
+  const lim = k === "per" ? [1, 50] : [-50, 100];
+  cond[k] = Math.min(lim[1], Math.max(lim[0], cond[k] + d));
+  update();
+}));
+$("#t-fcf").addEventListener("click", () => { cond.fcf = !cond.fcf; update(); });
+document.querySelectorAll("#market button").forEach(b => b.addEventListener("click", () => { cond.market = b.dataset.v; update(); }));
+document.querySelectorAll("#l1 button").forEach(b => b.addEventListener("click", () => { cond.l1 = b.dataset.v; update(); }));
+$("#capmin").addEventListener("change", e => { cond.capmin = Math.max(0, Number(e.target.value) || 0); update(); });
+$("#exfin").addEventListener("change", e => { cond.exfin = e.target.checked; update(); });
+$("#fcfy").addEventListener("change", e => { cond.fcfy = e.target.value === "" ? "" : Number(e.target.value); update(); });
+$("#sort").addEventListener("change", e => { cond.sort = e.target.value; update(); });
+$("#q").addEventListener("input", () => { shown = 50; render(); });
+$("#reset").addEventListener("click", () => { cond = Object.assign({}, DEFAULTS); update(); });
+$("#reload").addEventListener("click", load);
+$("#morebtn").addEventListener("click", () => { shown += 50; render(); });
+$("#list").addEventListener("click", e => {
+  const b = e.target.closest(".item"); if (!b) return;
+  openCode = openCode === b.dataset.code ? null : b.dataset.code;
+  render();
+});
+
+syncControls();
+load();
+</script>
+</body>
+</html>

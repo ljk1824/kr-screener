@@ -1,0 +1,10 @@
+{
+  "name": "국내 가치 스캐너",
+  "short_name": "가치스캐너",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F3F5F8",
+  "theme_color": "#1F3A5F",
+  "lang": "ko",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
