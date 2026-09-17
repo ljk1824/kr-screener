@@ -141,7 +141,7 @@ def load_listing():
                 "marcap": float(r.get("Marcap") or 0),
                 "dept": str(r.get("Dept") or "") if "Dept" in df.columns else "",
             }
-        price_date = now_kst().strftime("%Y-%m-%d")
+        price_date = last_trading_date(fdr)
         log(f"FinanceDataReader 목록 {len(out)}개")
         return out, price_date
     except Exception as e:  # noqa: BLE001
@@ -163,6 +163,17 @@ def load_listing():
     price_date = f"{day[:4]}-{day[4:6]}-{day[6:]}"
     log(f"pykrx 목록 {len(out)}개 ({price_date})")
     return out, price_date
+
+
+def last_trading_date(fdr):
+    """실제 마지막 거래일 (주말·휴장일 대응). 장중이면 오늘 날짜."""
+    try:
+        start = (now_kst() - timedelta(days=14)).strftime("%Y-%m-%d")
+        df = fdr.DataReader("005930", start)
+        return df.index[-1].strftime("%Y-%m-%d")
+    except Exception as e:  # noqa: BLE001
+        log(f"거래일 확인 실패, 오늘 날짜 사용: {e}")
+        return now_kst().strftime("%Y-%m-%d")
 
 
 def normalize_market(m):

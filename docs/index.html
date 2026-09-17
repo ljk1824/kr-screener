@@ -122,8 +122,10 @@ footer{margin-top:20px;font-size:12px;color:var(--muted)}
   <section class="query" aria-label="검색 조건">
     <p>
       PER
-      <span class="slot"><button type="button" data-step="per" data-d="-1" aria-label="PER 낮추기">−</button><output id="v-per">15</output><button type="button" data-step="per" data-d="1" aria-label="PER 높이기">+</button></span>
-      배 미만,
+      <span class="slot"><button type="button" data-step="perMin" data-d="-1" aria-label="PER 하한 낮추기">−</button><output id="v-permin">4</output><button type="button" data-step="perMin" data-d="1" aria-label="PER 하한 높이기">+</button></span>
+      ~
+      <span class="slot"><button type="button" data-step="per" data-d="-1" aria-label="PER 상한 낮추기">−</button><output id="v-per">15</output><button type="button" data-step="per" data-d="1" aria-label="PER 상한 높이기">+</button></span>
+      배,
       FCF
       <button type="button" class="toggle-word" id="t-fcf" aria-pressed="true">플러스</button>,
       매출
@@ -186,14 +188,14 @@ footer{margin-top:20px;font-size:12px;color:var(--muted)}
   <button type="button" class="morebtn" id="morebtn" hidden>더 보기</button>
 
   <footer>
-    PER은 시가총액 ÷ 최근 4분기 지배주주순이익, FCF는 최근 4분기 영업활동현금흐름에서 유형자산 취득액을 뺀 값이에요.
+    PER은 하한 이상 상한 미만으로 걸러요. 하한은 일회성 이익으로 PER이 비정상적으로 낮은 종목을 빼는 용도예요. PER은 시가총액(우선주 포함) ÷ 최근 4분기 지배주주순이익, FCF는 최근 4분기 영업활동현금흐름에서 유형자산 취득액을 뺀 값이에요.
     매출 성장률은 최신 보고서 누적 매출의 전년 동기 대비 증감이에요.
     1층 검사는 흑자, PER 30배 미만, FCF 플러스 종목만 매주 일요일에 DART 공시로 확인해요. 투자 판단 전 공시 원문을 확인하세요.
   </footer>
 </div>
 
 <script>
-const DEFAULTS = {per:15, fcf:true, rg:5, market:"ALL", capmin:1000, exfin:true, fcfy:"", sort:"per", l1:"EXF"};
+const DEFAULTS = {perMin:4, per:15, fcf:true, rg:5, market:"ALL", capmin:1000, exfin:true, fcfy:"", sort:"per", l1:"EXF"};
 const KEY = "kvs-conditions-v1";
 let cond = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || "{}"));
 let data = [], meta = null, openCode = null, shown = 50;
@@ -213,6 +215,7 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&l
 
 function syncControls(){
   $("#v-per").textContent = cond.per;
+  $("#v-permin").textContent = cond.perMin;
   $("#v-rg").textContent = cond.rg;
   const f = $("#t-fcf");
   f.textContent = cond.fcf ? "플러스" : "상관없음";
@@ -231,7 +234,7 @@ function filtered(){
   droppedCount = 0;
   const fyMin = cond.fcfy === "" ? null : Number(cond.fcfy);
   const out = data.filter(r => {
-    if (r.per === null || r.per >= cond.per) return false;
+    if (r.per === null || r.per < cond.perMin || r.per >= cond.per) return false;
     if (cond.fcf && !(r.fcf > 0)) return false;
     if (r.rg === null || r.rg <= cond.rg) return false;
     if (cond.market !== "ALL" && r.m !== cond.market) return false;
@@ -339,7 +342,11 @@ async function load(){
     if (meta.price_date){
       const [y, m, dd] = meta.price_date.split("-").map(Number);
       const wd = "일월화수목금토"[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()];
-      $("#basis").innerHTML = `주가 ${m}/${dd}(${wd}) 종가<br>재무 ${esc(meta.main_report || "")} 기준`;
+      const gen = meta.generated_at || "";
+      const genTime = gen.slice(11, 16);
+      const intraday = gen.slice(0, 10) === meta.price_date && genTime < "15:30";
+      const priceLabel = intraday ? `${genTime} 장중` : "종가";
+      $("#basis").innerHTML = `주가 ${m}/${dd}(${wd}) ${priceLabel}<br>재무 ${esc(meta.main_report || "")} 기준`;
     } else {
       $("#basis").textContent = "데이터 없음";
     }
@@ -352,7 +359,8 @@ async function load(){
 
 document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click", () => {
   const k = b.dataset.step, d = Number(b.dataset.d);
-  const lim = k === "per" ? [1, 50] : [-50, 100];
+  const lim = k === "per" ? [cond.perMin + 1, 50]
+            : k === "perMin" ? [0, cond.per - 1] : [-50, 100];
   cond[k] = Math.min(lim[1], Math.max(lim[0], cond[k] + d));
   update();
 }));
