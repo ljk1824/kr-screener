@@ -142,6 +142,7 @@ def load_listing():
                 "dept": str(r.get("Dept") or "") if "Dept" in df.columns else "",
             }
         price_date = last_trading_date(fdr)
+        fix_closes(out, price_date, fdr)
         log(f"FinanceDataReader 목록 {len(out)}개")
         return out, price_date
     except Exception as e:  # noqa: BLE001
@@ -174,6 +175,38 @@ def last_trading_date(fdr):
     except Exception as e:  # noqa: BLE001
         log(f"거래일 확인 실패, 오늘 날짜 사용: {e}")
         return now_kst().strftime("%Y-%m-%d")
+
+
+def fix_closes(out, price_date, fdr):
+    """종목목록 가격에는 NXT 체결가가 섞일 수 있어 KRX 일봉 종가로 교정. 장중이면 생략."""
+    from concurrent.futures import ThreadPoolExecutor
+    now = now_kst()
+    if price_date == now.strftime("%Y-%m-%d") and now.strftime("%H:%M") < "15:30":
+        log("장중 실행: 종가 교정 생략")
+        return
+    targets = [c for c, i in out.items() if normalize_market(i["market"])]
+    start = (datetime.strptime(price_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    def one(code):
+        try:
+            df = fdr.DataReader(code, start)
+            if len(df) and df.index[-1].strftime("%Y-%m-%d") == price_date:
+                return code, float(df["Close"].iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
+        return code, None
+
+    t0, fixed, failed = time.time(), 0, 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for code, close in ex.map(one, targets):
+            info = out[code]
+            if not close:
+                failed += 1
+            elif info["close"] > 0 and close != info["close"]:
+                info["marcap"] *= close / info["close"]
+                info["close"] = close
+                fixed += 1
+    log(f"KRX 종가 교정 {fixed}개, 조회 실패 {failed}개 / 대상 {len(targets)}개 ({time.time() - t0:.0f}초)")
 
 
 def normalize_market(m):
