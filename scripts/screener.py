@@ -196,9 +196,18 @@ def fix_closes(out, price_date, fdr):
             pass
         return code, None
 
-    t0, fixed, failed = time.time(), 0, 0
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for code, close in ex.map(one, targets):
+    import socket
+    from concurrent.futures import as_completed, TimeoutError as FutTimeout
+    log(f"KRX 종가 교정 시작: {len(targets)}개")
+    t0, fixed, failed, done = time.time(), 0, 0, 0
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(15)
+    ex = ThreadPoolExecutor(max_workers=8)
+    futs = [ex.submit(one, c) for c in targets]
+    try:
+        for fut in as_completed(futs, timeout=600):
+            code, close = fut.result()
+            done += 1
             info = out[code]
             if not close:
                 failed += 1
@@ -206,6 +215,13 @@ def fix_closes(out, price_date, fdr):
                 info["marcap"] *= close / info["close"]
                 info["close"] = close
                 fixed += 1
+            if done % 500 == 0:
+                log(f"  종가 교정 진행 {done}/{len(targets)}")
+    except FutTimeout:
+        log(f"종가 교정 10분 초과: 남은 {len(targets) - done}개는 기존 가격 유지")
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+        socket.setdefaulttimeout(old_timeout)
     log(f"KRX 종가 교정 {fixed}개, 조회 실패 {failed}개 / 대상 {len(targets)}개 ({time.time() - t0:.0f}초)")
 
 
