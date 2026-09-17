@@ -3,14 +3,14 @@ name: 스크리너 데이터 갱신
 on:
   schedule:
     - cron: "40 7 * * 1-5"   # 평일 16:40 KST - 종가 반영 (주가만 갱신)
-    - cron: "0 18 * * 6"     # 일요일 03:00 KST - 재무(신규 보고서만) + 1층 검사 + 주가
+    # 재무·1층 검사는 DART가 해외 서버에서 느려 WSL에서 주 1회 실행 (run_weekly.sh)
   workflow_dispatch:
     inputs:
       mode:
         description: "실행 모드"
         type: choice
-        options: [all, prices, financials, checks]
-        default: all
+        options: [prices, all, financials, checks]
+        default: prices
       force:
         description: "이미 수집한 종목도 전부 다시 수집"
         type: boolean
