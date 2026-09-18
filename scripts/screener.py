@@ -181,6 +181,7 @@ def load_listing(with_history=False):
                 "market": str(r["Market"]),
                 "close": safe_float(r.get("Close")),   # 장중에는 '-'가 들어올 수 있음
                 "marcap": safe_float(r.get("Marcap")),
+                "shares": safe_float(r.get("Stocks")),  # 시총이 빌 때 종가로 직접 계산하려고 보관
                 "dept": str(r.get("Dept") or "") if "Dept" in df.columns else "",
             }
         price_date = last_trading_date(fdr)
@@ -202,6 +203,7 @@ def load_listing(with_history=False):
                 "market": market,
                 "close": float(r["종가"]),
                 "marcap": float(r["시가총액"]),
+                "shares": float(r.get("상장주식수") or 0),
                 "dept": "",
             }
     price_date = f"{day[:4]}-{day[4:6]}-{day[6:]}"
@@ -210,11 +212,12 @@ def load_listing(with_history=False):
 
 
 def safe_float(v):
-    """'-' 처럼 숫자가 아닌 값은 0으로 처리 (장중 종목목록 대응)"""
+    """'-' 나 NaN 처럼 숫자가 아닌 값은 0으로 처리 (장중 종목목록 대응)"""
     try:
-        return float(v)
+        f = float(v)
     except (TypeError, ValueError):
         return 0.0
+    return 0.0 if f != f or f in (float("inf"), float("-inf")) else f
 
 
 def last_trading_date(fdr):
@@ -284,7 +287,7 @@ def price_pass(out, price_date, fdr):
         return code, None
 
     log(f"일봉 조회 시작: {len(targets)}개")
-    t0, fixed, failed, done, ind_ok = time.time(), 0, 0, 0, 0
+    t0, fixed, failed, done, ind_ok, filled = time.time(), 0, 0, 0, 0, 0
     old_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(15)  # 응답 없는 조회는 15초 후 실패 처리
     ex = ThreadPoolExecutor(max_workers=8)
@@ -297,12 +300,16 @@ def price_pass(out, price_date, fdr):
             if df is None:
                 failed += 1
                 continue
+            close = safe_float(df["Close"].iloc[-1])
             if not intraday and df.index[-1].strftime("%Y-%m-%d") == price_date:
-                close = float(df["Close"].iloc[-1])
                 if close > 0 and info["close"] > 0 and close != info["close"]:
                     info["marcap"] *= close / info["close"]
                     info["close"] = close
                     fixed += 1
+            if info["marcap"] <= 0 and close > 0 and info.get("shares", 0) > 0:
+                info["close"] = close  # 종목목록 시총이 비면 종가 x 상장주식수로 계산
+                info["marcap"] = close * info["shares"]
+                filled += 1
             try:
                 ind = calc_indicators(df)
             except Exception:  # noqa: BLE001
@@ -318,8 +325,8 @@ def price_pass(out, price_date, fdr):
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
         socket.setdefaulttimeout(old_timeout)
-    log(f"KRX 종가 교정 {fixed}개, 지표 계산 {ind_ok}개, 조회 실패 {failed}개 / 대상 {len(targets)}개 "
-        f"({time.time() - t0:.0f}초)")
+    log(f"KRX 종가 교정 {fixed}개, 시총 보정 {filled}개, 지표 계산 {ind_ok}개, 조회 실패 {failed}개 "
+        f"/ 대상 {len(targets)}개 ({time.time() - t0:.0f}초)")
 
 
 def normalize_market(m):
