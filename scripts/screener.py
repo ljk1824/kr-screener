@@ -143,14 +143,26 @@ def load_json(path, default):
     return default
 
 
+def clean_nan(o):
+    """NaN/Infinity는 표준 JSON이 아니어서 브라우저가 파일 전체를 못 읽는다 -> None으로 치환"""
+    if isinstance(o, float):
+        return None if o != o or o in (float("inf"), float("-inf")) else o
+    if isinstance(o, dict):
+        return {k: clean_nan(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [clean_nan(v) for v in o]
+    return o
+
+
 def save_json(path, obj, compact=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    obj = clean_nan(obj)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         if compact:
-            json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+            json.dump(obj, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         else:
-            json.dump(obj, f, ensure_ascii=False, indent=1)
+            json.dump(obj, f, ensure_ascii=False, indent=1, allow_nan=False)
     os.replace(tmp, path)
 
 
