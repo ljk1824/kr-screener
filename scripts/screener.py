@@ -40,7 +40,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIN_PATH = os.path.join(ROOT, "data", "financials.json")
 CORP_CACHE = os.path.join(ROOT, "data", "corp_codes.json")
 CHECK_PATH = os.path.join(ROOT, "data", "checks.json")
-FIN_VERSION = 2  # 재무 레코드 구조가 바뀌면 올려서 재수집
+FIN_VERSION = 4  # 재무 레코드 구조가 바뀌면 올려서 재수집 (v4: 무형자산 취득 차감)
 OUT_PATH = os.path.join(ROOT, "docs", "data", "screen.json")
 DART = "https://opendart.fss.or.kr/api"
 SLEEP = float(os.environ.get("DART_SLEEP", "0.15"))
@@ -77,6 +77,28 @@ ACCOUNTS = {
                 "ifrs_CashFlowsFromUsedInOperatingActivities"],
         "names": ["영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로부터의현금흐름",
                   "영업활동순현금흐름"],
+    },
+    "equity_parent": {
+        "sj": ("BS",),
+        "ids": ["ifrs-full_EquityAttributableToOwnersOfParent", "ifrs_EquityAttributableToOwnersOfParent"],
+        "names": ["지배기업소유주지분", "지배기업의소유주에게귀속되는자본", "지배기업소유주지분합계", "지배기업의소유주지분"],
+    },
+    "equity": {
+        "sj": ("BS",),
+        "ids": ["ifrs-full_Equity", "ifrs_Equity"],
+        "names": ["자본총계", "자본합계"],
+    },
+    "liab": {
+        "sj": ("BS",),
+        "ids": ["ifrs-full_Liabilities", "ifrs_Liabilities"],
+        "names": ["부채총계", "부채합계"],
+    },
+    "capex_int": {
+        "sj": ("CF",),
+        "ids": ["ifrs-full_PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities",
+                "ifrs-full_PurchaseOfIntangibleAssets", "ifrs_PurchaseOfIntangibleAssets"],
+        "names": ["무형자산의취득", "무형자산취득", "무형자산의증가", "영업권이외의무형자산의취득",
+                  "콘텐츠자산의취득", "판권의취득", "개발비의취득"],
     },
     "capex": {
         "sj": ("CF",),
@@ -126,8 +148,9 @@ def save_json(path, obj, compact=False):
 
 
 # ---------------------------------------------------------------- 종목 목록/시총
-def load_listing():
-    """상장 보통주 목록과 시가총액. FinanceDataReader 우선, 실패 시 pykrx."""
+def load_listing(with_history=False):
+    """상장 보통주 목록과 시가총액. FinanceDataReader 우선, 실패 시 pykrx.
+    with_history=True면 종목별 1년 일봉으로 KRX 종가 교정 + 매매 지표 계산."""
     try:
         import FinanceDataReader as fdr
         df = fdr.StockListing("KRX")
@@ -142,7 +165,8 @@ def load_listing():
                 "dept": str(r.get("Dept") or "") if "Dept" in df.columns else "",
             }
         price_date = last_trading_date(fdr)
-        fix_closes(out, price_date, fdr)
+        if with_history:
+            price_pass(out, price_date, fdr)
         log(f"FinanceDataReader 목록 {len(out)}개")
         return out, price_date
     except Exception as e:  # noqa: BLE001
@@ -177,52 +201,98 @@ def last_trading_date(fdr):
         return now_kst().strftime("%Y-%m-%d")
 
 
-def fix_closes(out, price_date, fdr):
-    """종목목록 가격에는 NXT 체결가가 섞일 수 있어 KRX 일봉 종가로 교정. 장중이면 생략."""
-    from concurrent.futures import ThreadPoolExecutor
+def calc_indicators(df):
+    """일봉(1년)으로 스윙·단타 지표 계산. 자료가 61일 미만이면 None"""
+    df = df.dropna(subset=["Close"])
+    df = df[df["Close"] > 0]
+    if len(df) < 61:
+        return None
+    import pandas as pd
+    c = df["Close"].astype(float)
+    h = df["High"].astype(float).where(lambda s: s > 0, c)
+    lo = df["Low"].astype(float).where(lambda s: s > 0, c)
+    val = c * df["Volume"].astype(float)
+    ma20 = c.rolling(20).mean()
+    ma60 = c.rolling(60).mean()
+    prev = c.shift(1)
+    tr = pd.concat([h - lo, (h - prev).abs(), (lo - prev).abs()], axis=1).max(axis=1)
+    last = c.iloc[-1]
+    tv20 = val.iloc[-20:].mean()
+    return {
+        "close": last,
+        "ma20": ma20.iloc[-1],
+        "ma60": ma60.iloc[-1],
+        "ma60_up": bool(ma60.iloc[-1] > ma60.iloc[-11]) if len(df) >= 71 else False,
+        "r20": last / c.iloc[-21] - 1,
+        "g20": last / ma20.iloc[-1] - 1,
+        "vr": val.iloc[-5:].mean() / tv20 if tv20 > 0 else None,
+        "atr": tr.iloc[-14:].mean() / last,
+        "oh": last / h.iloc[-250:].max() - 1,
+        "tv20": tv20,
+        "tvr": val.iloc[-1] / tv20 if tv20 > 0 else None,
+        "chg": last / c.iloc[-2] - 1,
+    }
+
+
+def price_pass(out, price_date, fdr):
+    """종목별 1년 일봉 조회.
+    - 종목목록 가격에는 NXT(대체거래소) 체결가가 섞일 수 있어 KRX 일봉 종가로 교정 (장중 실행이면 교정 생략)
+    - 스윙·단타 지표 계산 -> out[code]["ind"]"""
+    import socket
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutTimeout
     now = now_kst()
-    if price_date == now.strftime("%Y-%m-%d") and now.strftime("%H:%M") < "15:30":
-        log("장중 실행: 종가 교정 생략")
-        return
+    intraday = price_date == now.strftime("%Y-%m-%d") and now.strftime("%H:%M") < "15:30"
+    if intraday:
+        log("장중 실행: 종가 교정은 생략하고 지표만 계산")
     targets = [c for c, i in out.items() if normalize_market(i["market"])]
-    start = (datetime.strptime(price_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+    start = (datetime.strptime(price_date, "%Y-%m-%d") - timedelta(days=400)).strftime("%Y-%m-%d")
 
     def one(code):
         try:
             df = fdr.DataReader(code, start)
-            if len(df) and df.index[-1].strftime("%Y-%m-%d") == price_date:
-                return code, float(df["Close"].iloc[-1])
+            if len(df):
+                return code, df
         except Exception:  # noqa: BLE001
             pass
         return code, None
 
-    import socket
-    from concurrent.futures import as_completed, TimeoutError as FutTimeout
-    log(f"KRX 종가 교정 시작: {len(targets)}개")
-    t0, fixed, failed, done = time.time(), 0, 0, 0
+    log(f"일봉 조회 시작: {len(targets)}개")
+    t0, fixed, failed, done, ind_ok = time.time(), 0, 0, 0, 0
     old_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(15)
+    socket.setdefaulttimeout(15)  # 응답 없는 조회는 15초 후 실패 처리
     ex = ThreadPoolExecutor(max_workers=8)
     futs = [ex.submit(one, c) for c in targets]
     try:
-        for fut in as_completed(futs, timeout=600):
-            code, close = fut.result()
+        for fut in as_completed(futs, timeout=900):  # 전체 15분 제한
+            code, df = fut.result()
             done += 1
             info = out[code]
-            if not close:
+            if df is None:
                 failed += 1
-            elif info["close"] > 0 and close != info["close"]:
-                info["marcap"] *= close / info["close"]
-                info["close"] = close
-                fixed += 1
+                continue
+            if not intraday and df.index[-1].strftime("%Y-%m-%d") == price_date:
+                close = float(df["Close"].iloc[-1])
+                if close > 0 and info["close"] > 0 and close != info["close"]:
+                    info["marcap"] *= close / info["close"]
+                    info["close"] = close
+                    fixed += 1
+            try:
+                ind = calc_indicators(df)
+            except Exception:  # noqa: BLE001
+                ind = None
+            if ind:
+                ind["date"] = df.index[-1].strftime("%Y-%m-%d")
+                info["ind"] = ind
+                ind_ok += 1
             if done % 500 == 0:
-                log(f"  종가 교정 진행 {done}/{len(targets)}")
+                log(f"  일봉 조회 진행 {done}/{len(targets)}")
     except FutTimeout:
-        log(f"종가 교정 10분 초과: 남은 {len(targets) - done}개는 기존 가격 유지")
+        log(f"일봉 조회 15분 초과: 남은 {len(targets) - done}개는 기존 가격 유지, 지표 없음")
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
         socket.setdefaulttimeout(old_timeout)
-    log(f"KRX 종가 교정 {fixed}개, 조회 실패 {failed}개 / 대상 {len(targets)}개 ({time.time() - t0:.0f}초)")
+    log(f"KRX 종가 교정 {fixed}개, 지표 계산 {ind_ok}개, 조회 실패 {failed}개 / 대상 {len(targets)}개 "
+        f"({time.time() - t0:.0f}초)")
 
 
 def normalize_market(m):
@@ -271,6 +341,8 @@ def load_corp_codes():
     if cache.get("date") == now_kst().strftime("%Y-%m-%d"):
         return cache["map"]
     r = dart_get("corpCode.xml", {})
+    if not r.content.startswith(b"PK"):
+        sys.exit("DART 기업코드 다운로드 실패: " + r.content[:300].decode("utf-8", "ignore"))
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         xml = z.read(z.namelist()[0])
     root = ET.fromstring(xml)
@@ -321,7 +393,7 @@ def norm(s):
 def find_row(rows, key):
     rule = ACCOUNTS[key]
     cands = [r for r in rows if r.get("sj_div") in rule["sj"]]
-    if key in ("net_parent", "net"):
+    if key in ("net_parent", "net"):  # 총포괄이익 귀속분을 순이익으로 잘못 집지 않게 제외
         cands = [r for r in cands if "Comprehensive" not in (r.get("account_id") or "")]
     for r in cands:
         if r.get("account_id") in rule["ids"]:
@@ -343,7 +415,7 @@ def cur_prev(row):
     prev = to_int(row.get("frmtrm_add_amount"))
     if prev is None:
         prev = to_int(row.get("frmtrm_amount"))
-    if prev is None:
+    if prev is None:  # 분기·반기 현금흐름표는 전년 동기 누적이 frmtrm_q_amount에 들어옴
         prev = to_int(row.get("frmtrm_q_amount"))
     return cur, prev
 
@@ -352,12 +424,14 @@ def extract(rows):
     out = {}
     for key in ACCOUNTS:
         cur, prev = cur_prev(find_row(rows, key))
-        if key == "capex":  # 취득액 부호 표기가 회사/보고서마다 달라 절댓값으로 통일
+        if key in ("capex", "capex_int"):  # 취득액 부호 표기가 회사/보고서마다 달라 절댓값으로 통일
             cur = abs(cur) if cur is not None else None
             prev = abs(prev) if prev is not None else None
         out[key] = (cur, prev)
     if out["net_parent"][0] is None:  # 별도재무제표 등은 지배주주 구분 없음
         out["net_parent"] = out["net"]
+    if out["equity_parent"][0] is None:
+        out["equity_parent"] = out["equity"]
     return out
 
 
@@ -382,15 +456,17 @@ def report_candidates(today):
 
 
 def fcf_history(rows, base_year):
-    """사업보고서의 당기·전기·전전기 FCF. [[연도, FCF], ...] 최신순"""
+    """사업보고서의 당기·전기·전전기 FCF (유형+무형 취득 차감). [[연도, FCF], ...] 최신순"""
     ocf = find_row(rows, "ocf")
     capex = find_row(rows, "capex")
+    capex_int = find_row(rows, "capex_int")
     out = []
     for i, col in enumerate(("thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount")):
         o = to_int(ocf.get(col)) if ocf else None
         c = to_int(capex.get(col)) if capex else None
-        fcf = None if o is None else o - (abs(c) if c is not None else 0)
-        out.append([base_year - i, fcf])
+        ci = to_int(capex_int.get(col)) if capex_int else None
+        spend = (abs(c) if c is not None else 0) + (abs(ci) if ci is not None else 0)
+        out.append([base_year - i, None if o is None else o - spend])
     return out
 
 
@@ -403,7 +479,7 @@ def build_record(corp_code, candidates):
     if not rows:
         return None
 
-    keys = ("revenue", "net_parent", "op", "ocf", "capex")
+    keys = ("revenue", "net_parent", "op", "ocf", "capex", "capex_int")
     latest = extract(rows)
     is_annual = reprt == "11011"
     if is_annual:
@@ -422,7 +498,8 @@ def build_record(corp_code, candidates):
         growth = rev_cur / rev_prev - 1
 
     capex = vals["capex"] if vals["capex"] is not None else 0  # 취득 내역이 없으면 0
-    fcf = vals["ocf"] - capex if vals["ocf"] is not None else None
+    capex_int = vals["capex_int"] if vals["capex_int"] is not None else 0  # 영화 제작비·게임 개발비 등
+    fcf = vals["ocf"] - capex - capex_int if vals["ocf"] is not None else None
 
     return {
         "v": FIN_VERSION,
@@ -435,8 +512,12 @@ def build_record(corp_code, candidates):
         "op_ttm": vals["op"],
         "ocf_ttm": vals["ocf"],
         "capex_ttm": capex,
+        "capex_int_ttm": capex_int,
         "fcf_ttm": fcf,
         "fcf_hist": fcf_history(arows, annual_year) if arows else [],
+        "equity_parent": latest["equity_parent"][0],
+        "equity": latest["equity"][0],
+        "liab": latest["liab"][0],
         "updated": now_kst().strftime("%Y-%m-%d"),
     }
 
@@ -546,7 +627,7 @@ def fetch_audit(corp_code, year):
 
 
 def total_caps(listing):
-    """보통주 시총 + 같은 회사 우선주 시총"""
+    """보통주 시총 + 같은 회사 우선주 시총. 주당이익(보통주+우선주) 기준 PER과 맞추기 위함"""
     caps = {}
     for code, info in listing.items():
         if len(code) == 6:
@@ -709,18 +790,120 @@ def evaluate_layer1(rec, chk, info):
     return status, items
 
 
+# ---------------------------------------------------------------- 매매 스타일 적합도
+def pct(v, digits=1):
+    return None if v is None else round(v * 100, digits)
+
+
+def score_long(rec, l1, per, rg):
+    """장투 적합도. 대상: 1층 통과. 반환 (점수, [[항목, 점수, 배점, 값], ...]) 또는 (None, [])"""
+    if l1 != "p":
+        return None, []
+    items = []
+    ni, eqp, eq, liab = rec.get("ni_ttm"), rec.get("equity_parent"), rec.get("equity"), rec.get("liab")
+    roe = ni / eqp if ni is not None and eqp and eqp > 0 else None
+    pts = 0 if roe is None else 25 if roe >= 0.15 else 15 if roe >= 0.10 else 5 if roe >= 0.05 else 0
+    items.append(["수익성 ROE", pts, 25, "-" if roe is None else f"{roe * 100:.1f}%"])
+
+    de = liab / eq if liab is not None and eq and eq > 0 else None
+    pts = 0 if de is None else 20 if de <= 0.5 else 12 if de <= 1.0 else 5 if de <= 2.0 else 0
+    items.append(["부채비율", pts, 20, "-" if de is None else f"{de * 100:.0f}%"])
+
+    hist = [v for _, v in rec.get("fcf_hist", []) if v is not None]
+    plus = sum(1 for v in hist if v > 0)
+    pts = 20 if len(hist) >= 3 and plus == len(hist) else 10 if plus >= 2 else 0
+    items.append(["FCF 지속성", pts, 20, f"{len(hist)}년 중 {plus}년 플러스"])
+
+    ocf = rec.get("ocf_ttm")
+    cc = ocf / ni if ocf is not None and ni and ni > 0 else None
+    pts = 0 if cc is None else 15 if cc >= 1.0 else 8 if cc >= 0.7 else 0
+    items.append(["이익의 질", pts, 15, "-" if cc is None else f"영업CF가 순이익의 {cc:.2f}배"])
+
+    pts = 0 if per is None else 10 if per <= 10 else 5 if per <= 15 else 0
+    items.append(["밸류에이션", pts, 10, "-" if per is None else f"PER {per:.1f}"])
+
+    pts = 0 if rg is None else 10 if 0.05 < rg <= 0.30 else 5 if rg > 0 else 0
+    items.append(["매출 성장", pts, 10, "-" if rg is None else f"{rg * 100:+.1f}%" + (" (과열 의심)" if rg > 0.30 else "")])
+    return sum(i[1] for i in items), items
+
+
+def score_swing(ind, l1, cap_eok):
+    """스윙 적합도. 대상: 1층 탈락 제외, 시총 1,000억+, 20일 평균 거래대금 30억+"""
+    if not ind or l1 == "f" or cap_eok < 1000 or ind["tv20"] < 30e8:
+        return None, []
+    items = []
+    c, m20, m60 = ind["close"], ind["ma20"], ind["ma60"]
+    if c > m20 > m60:
+        pts, txt = 25, "종가 > 20일선 > 60일선"
+    elif c > m20:
+        pts, txt = 10, "종가 > 20일선 (60일선 아래 정렬)"
+    else:
+        pts, txt = 0, "종가가 20일선 아래"
+    items.append(["추세 정렬", pts, 25, txt])
+    items.append(["중기 추세", 10 if ind["ma60_up"] else 0, 10, "60일선 상승" if ind["ma60_up"] else "60일선 하락·횡보"])
+
+    r = ind["r20"]
+    pts = 15 if 0 <= r <= 0.15 else 8 if 0.15 < r <= 0.25 else 0
+    items.append(["모멘텀", pts, 15, f"20일 {r * 100:+.1f}%" + (" (과열)" if r > 0.25 else "")])
+
+    g = ind["g20"]
+    pts = 15 if 0 <= g <= 0.05 else 7 if 0.05 < g <= 0.10 else 0
+    items.append(["눌림 위치", pts, 15, f"20일선 대비 {g * 100:+.1f}%"])
+
+    vr = ind["vr"]
+    pts = 0 if vr is None else 15 if 1.2 <= vr <= 2.5 else 7 if 1.0 <= vr < 1.2 else 5 if vr > 2.5 else 0
+    items.append(["거래량 증가", pts, 15, "-" if vr is None else f"5일/20일 {vr:.2f}배"])
+
+    a = ind["atr"]
+    pts = 10 if 0.02 <= a <= 0.05 else 5 if 0.015 <= a < 0.02 or 0.05 < a <= 0.07 else 0
+    items.append(["변동성", pts, 10, f"ATR {a * 100:.1f}%"])
+
+    oh = ind["oh"]
+    pts = 10 if oh >= -0.15 else 5 if oh >= -0.25 else 0
+    items.append(["고점 근접", pts, 10, f"52주 고점 대비 {oh * 100:.1f}%"])
+    return sum(i[1] for i in items), items
+
+
+def score_day(ind, market_fail):
+    """단타 환경 점수. 대상: 관리·시장조치 종목과 1,000원 미만 제외"""
+    if not ind or market_fail or ind["close"] < 1000:
+        return None, []
+    items = []
+    tv = ind["tv20"]
+    pts = 30 if tv >= 300e8 else 15 if tv >= 100e8 else 5 if tv >= 50e8 else 0
+    items.append(["유동성", pts, 30, f"20일 평균 거래대금 {tv / 1e8:,.0f}억"])
+
+    a = ind["atr"]
+    pts = 25 if 0.03 <= a <= 0.08 else 12 if 0.02 <= a < 0.03 or 0.08 < a <= 0.12 else 0
+    items.append(["변동성", pts, 25, f"ATR {a * 100:.1f}%"])
+
+    tvr = ind["tvr"]
+    pts = 0 if tvr is None else 25 if tvr >= 2 else 12 if tvr >= 1.5 else 0
+    items.append(["거래 급증", pts, 25, "-" if tvr is None else f"당일/20일 평균 {tvr:.1f}배"])
+
+    ch = ind["chg"]
+    pts = 10 if abs(ch) >= 0.03 else 5 if abs(ch) >= 0.015 else 0
+    items.append(["당일 움직임", pts, 10, f"{ch * 100:+.1f}%"])
+
+    pts = 10 if ind["close"] >= 5000 else 5
+    items.append(["가격대", pts, 10, f"{ind['close']:,.0f}원"])
+    return sum(i[1] for i in items), items
+
+
 # ---------------------------------------------------------------- 결합/출력
 def eok(v):
     return None if v is None else round(v / 1e8, 1)
 
 
 def run_prices():
-    listing, price_date = load_listing()
+    listing, price_date = load_listing(with_history=True)
     caps = total_caps(listing)
     fin = load_json(FIN_PATH, {})
     checks = load_json(CHECK_PATH, {})
     fields = ["c", "n", "m", "f", "cap", "per", "rg", "fcf", "ocf", "capex", "ni", "rev", "rep", "fs",
-              "op", "l1", "ck"]
+              "op", "l1", "ck", "capexi",
+              "sL", "bL", "sS", "bS", "sD", "bD",
+              "roe", "de", "px", "r20", "g20", "vr", "atr", "tv20", "tvr", "chg", "idt"]
     rows = []
     reports = {}
     for code, info in listing.items():
@@ -734,12 +917,26 @@ def run_prices():
         per = round(cap / ni, 2) if ni and ni > 0 else None
         rg = rec.get("rev_growth")
         l1, ck = evaluate_layer1(rec, checks.get(code), info)
+        ind = info.get("ind")
+        market_fail = any(x[0] == CHECK_LABELS[6] and x[1] == "f" for x in ck)
+        sL, bL = score_long(rec, l1, per, rg)
+        sS, bS = score_swing(ind, l1, cap / 1e8)
+        sD, bD = score_day(ind, market_fail)
+        ni_, eqp, eq, liab = rec.get("ni_ttm"), rec.get("equity_parent"), rec.get("equity"), rec.get("liab")
+        roe = ni_ / eqp if ni_ is not None and eqp and eqp > 0 else None
+        de = liab / eq if liab is not None and eq and eq > 0 else None
+        g = ind or {}
         rows.append([
             code, info["name"], normalize_market(info["market"]), 1 if is_fin(info["name"]) else 0,
             eok(cap), per, None if rg is None else round(rg * 100, 1),
             eok(rec.get("fcf_ttm")), eok(rec.get("ocf_ttm")), eok(rec.get("capex_ttm")),
             eok(ni), eok(rec.get("rev_ttm")), rec.get("report"), rec.get("fs"),
-            eok(rec.get("op_ttm")), l1, ck,
+            eok(rec.get("op_ttm")), l1, ck, eok(rec.get("capex_int_ttm")),
+            sL, bL, sS, bS, sD, bD,
+            pct(roe), pct(de, 0), g.get("close"), pct(g.get("r20")), pct(g.get("g20")),
+            None if g.get("vr") is None else round(g["vr"], 2), pct(g.get("atr")),
+            eok(g.get("tv20")), None if g.get("tvr") is None else round(g["tvr"], 2),
+            pct(g.get("chg")), g.get("date"),
         ])
         reports[rec.get("report")] = reports.get(rec.get("report"), 0) + 1
 
@@ -751,6 +948,9 @@ def run_prices():
             "main_report": main_report,
             "count": len(rows),
             "checked": sum(1 for r in rows if r[15] != "n"),
+            "scored": {"L": sum(1 for r in rows if r[17] is not None),
+                       "S": sum(1 for r in rows if r[19] is not None),
+                       "D": sum(1 for r in rows if r[21] is not None)},
             "unit": "억원",
         },
         "fields": fields,

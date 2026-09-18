@@ -105,6 +105,23 @@ ol.list li+li{border-top:1px solid var(--line)}
 .ck .note{color:var(--muted)}
 .ck a{font-size:12px;color:var(--brand);text-decoration:underline;background:none;padding:0}
 .dropped{font-size:12px;opacity:.8;margin-top:2px}
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:10px}
+.modes button{border:0;background:none;border-radius:10px;padding:9px 0;font-weight:600;font-size:14px;color:var(--muted)}
+.modes button[aria-pressed="true"]{background:var(--brand);color:#fff}
+@media (prefers-color-scheme: dark){.modes button[aria-pressed="true"]{color:#0F1620}}
+.query p.mode-note{font-size:12px;font-weight:400;letter-spacing:0;opacity:.85;margin:12px 0 0;line-height:1.5}
+.scores{display:flex;gap:6px;margin:10px 0 4px}
+.scores span{flex:1;text-align:center;background:var(--brand-soft);border-radius:8px;padding:6px 0;font-size:12px}
+.scores b{display:block;font-size:17px}
+.scores .on{outline:2px solid var(--brand)}
+.bd{margin:6px 0 10px}
+.bd h3{font-size:13px;margin:4px 0 6px}
+.bd-row{display:grid;grid-template-columns:84px 1fr 44px;gap:8px;align-items:center;font-size:13px;padding:3px 0}
+.bd-row .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.bd-row .bar i{display:block;height:100%;background:var(--brand)}
+.bd-row .pts{text-align:right;font-weight:700}
+.bd-row .val{grid-column:1 / -1;font-size:12px;color:var(--muted);margin-top:-2px}
+.hidden{display:none!important}
 .state{padding:28px 16px;text-align:center;color:var(--muted)}
 .state strong{display:block;color:var(--ink);margin-bottom:4px}
 .morebtn{display:block;width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);font-weight:600}
@@ -119,8 +136,21 @@ footer{margin-top:20px;font-size:12px;color:var(--muted)}
     <button class="icon-btn" id="reload" type="button">새로고침</button>
   </header>
 
+  <nav class="modes" id="modes" aria-label="분석 방식">
+    <button type="button" data-v="V" aria-pressed="true">가치</button>
+    <button type="button" data-v="L" aria-pressed="false">장투</button>
+    <button type="button" data-v="S" aria-pressed="false">스윙</button>
+    <button type="button" data-v="D" aria-pressed="false">단타</button>
+  </nav>
+
   <section class="query" aria-label="검색 조건">
-    <p>
+    <p id="q-style" class="hidden">
+      <span id="mode-label">장투</span> 적합도
+      <span class="slot"><button type="button" id="min-dn" aria-label="최소 점수 낮추기">−</button><output id="v-min">60</output><button type="button" id="min-up" aria-label="최소 점수 높이기">+</button></span>
+      점 이상, 가치 조건
+      <button type="button" class="toggle-word" id="t-withv" aria-pressed="false">미적용</button>
+    </p>
+    <p id="q-value">
       PER
       <span class="slot"><button type="button" data-step="perMin" data-d="-1" aria-label="PER 하한 낮추기">−</button><output id="v-permin">4</output><button type="button" data-step="perMin" data-d="1" aria-label="PER 하한 높이기">+</button></span>
       ~
@@ -136,6 +166,7 @@ footer{margin-top:20px;font-size:12px;color:var(--muted)}
       <div><div class="count" aria-live="polite"><span id="count">0</span><small>개</small></div><div class="dropped" id="dropped"></div></div>
       <div class="basis" id="basis">데이터 확인 중</div>
     </div>
+    <p class="mode-note hidden" id="mode-note"></p>
   </section>
 
   <details class="more">
@@ -188,14 +219,20 @@ footer{margin-top:20px;font-size:12px;color:var(--muted)}
   <button type="button" class="morebtn" id="morebtn" hidden>더 보기</button>
 
   <footer>
-    PER은 하한 이상 상한 미만으로 걸러요. 하한은 일회성 이익으로 PER이 비정상적으로 낮은 종목을 빼는 용도예요. PER은 시가총액(우선주 포함) ÷ 최근 4분기 지배주주순이익, FCF는 최근 4분기 영업활동현금흐름에서 유형자산 취득액을 뺀 값이에요.
+    PER은 하한 이상 상한 미만으로 걸러요. 하한은 일회성 이익으로 PER이 비정상적으로 낮은 종목을 빼는 용도예요. PER은 시가총액(우선주 포함) ÷ 최근 4분기 지배주주순이익, FCF는 최근 4분기 영업활동현금흐름에서 유형·무형자산 취득액을 뺀 값이에요.
     매출 성장률은 최신 보고서 누적 매출의 전년 동기 대비 증감이에요.
-    1층 검사는 흑자, PER 30배 미만, FCF 플러스 종목만 매주 일요일에 DART 공시로 확인해요. 투자 판단 전 공시 원문을 확인하세요.
+    1층 검사와 재무는 주 1회 갱신돼요. 장투·스윙·단타 점수는 규칙 기반 참고 점수이며, 수익을 보장하지 않고 매수 추천이 아니에요. 투자 판단 전 공시 원문을 확인하세요.
   </footer>
 </div>
 
 <script>
-const DEFAULTS = {perMin:4, per:15, fcf:true, rg:5, market:"ALL", capmin:1000, exfin:true, fcfy:"", sort:"per", l1:"EXF"};
+const DEFAULTS = {perMin:4, per:15, fcf:true, rg:5, market:"ALL", capmin:1000, exfin:true, fcfy:"", sort:"per", l1:"EXF",
+  mode:"V", minS:{L:60, S:60, D:60}, withV:{L:true, S:false, D:false}};
+const MODES = {
+  L:{label:"장투", key:"sL", bd:"bL", note:"1층 통과 종목만 채점해요. ROE, 부채비율, FCF 지속성, 이익의 질, PER, 매출 성장 기준의 규칙 점수이며 매수 추천이 아니에요."},
+  S:{label:"스윙", key:"sS", bd:"bS", note:"시총 1,000억, 20일 평균 거래대금 30억 이상만 채점해요. 종가 기준 하루 1회 갱신이라 진입 시점은 차트로 다시 확인하세요."},
+  D:{label:"단타", key:"sD", bd:"bD", note:"실시간 데이터가 아니에요. 마지막 거래일 종가 기준으로 다음 거래일 관심 후보를 고르는 용도로만 쓰세요."},
+};
 const KEY = "kvs-conditions-v1";
 let cond = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || "{}"));
 let data = [], meta = null, openCode = null, shown = 50;
@@ -226,6 +263,21 @@ function syncControls(){
   $("#exfin").checked = cond.exfin;
   $("#fcfy").value = cond.fcfy;
   $("#sort").value = cond.sort;
+  const sm = cond.mode !== "V";
+  document.querySelectorAll("#modes button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === cond.mode));
+  $("#q-value").classList.toggle("hidden", sm);
+  $("#q-style").classList.toggle("hidden", !sm);
+  $("#mode-note").classList.toggle("hidden", !sm);
+  $("#sort").classList.toggle("hidden", sm);
+  if (sm){
+    const M = MODES[cond.mode];
+    $("#mode-label").textContent = M.label;
+    $("#v-min").textContent = cond.minS[cond.mode];
+    const w = cond.withV[cond.mode];
+    $("#t-withv").textContent = w ? "함께 적용" : "미적용";
+    $("#t-withv").setAttribute("aria-pressed", w);
+    $("#mode-note").textContent = M.note;
+  }
 }
 
 let droppedCount = 0;
@@ -233,15 +285,23 @@ function filtered(){
   const q = $("#q").value.trim().toLowerCase();
   droppedCount = 0;
   const fyMin = cond.fcfy === "" ? null : Number(cond.fcfy);
+  const sm = cond.mode !== "V";
+  const M = MODES[cond.mode];
+  const useValue = !sm || cond.withV[cond.mode];
   const out = data.filter(r => {
+    if (sm){
+      const s = r[M.key];
+      if (s === null || s === undefined || s < cond.minS[cond.mode]) return false;
+    }
+    if (cond.market !== "ALL" && r.m !== cond.market) return false;
+    if (q && !(r.n.toLowerCase().includes(q) || r.c.includes(q))) return false;
+    if (!useValue) return true;
     if (r.per === null || r.per < cond.perMin || r.per >= cond.per) return false;
     if (cond.fcf && !(r.fcf > 0)) return false;
     if (r.rg === null || r.rg <= cond.rg) return false;
-    if (cond.market !== "ALL" && r.m !== cond.market) return false;
     if (cond.capmin && r.cap < Number(cond.capmin)) return false;
     if (cond.exfin && r.f) return false;
     if (fyMin !== null && !(r.fy >= fyMin)) return false;
-    if (q && !(r.n.toLowerCase().includes(q) || r.c.includes(q))) return false;
     if (cond.l1 === "EXF" && r.l1 === "f"){ droppedCount++; return false; }
     if (cond.l1 === "PASS" && r.l1 !== "p"){ if (r.l1 === "f") droppedCount++; return false; }
     return true;
@@ -250,6 +310,7 @@ function filtered(){
     per:(a,b)=>a.per-b.per, rg:(a,b)=>b.rg-a.rg,
     fy:(a,b)=>(b.fy??-1e9)-(a.fy??-1e9), cap:(a,b)=>b.cap-a.cap
   }[cond.sort];
+  if (sm) return out.sort((a, b) => b[M.key] - a[M.key] || (b.tv20 ?? 0) - (a.tv20 ?? 0));
   return out.sort(by);
 }
 
@@ -264,20 +325,36 @@ function checksHTML(r){
   </div>`;
 }
 
+function scoresHTML(r){
+  const cell = (k, label) => `<span class="${cond.mode === k ? "on" : ""}">${label}<b>${r[MODES[k].key] ?? "-"}</b></span>`;
+  let html = `<div class="scores">${cell("L", "장투")}${cell("S", "스윙")}${cell("D", "단타")}</div>`;
+  if (cond.mode !== "V" && r[MODES[cond.mode].bd]){
+    html += `<div class="bd"><h3>${MODES[cond.mode].label} 점수 구성</h3>${r[MODES[cond.mode].bd].map(([lbl, pts, max, val]) => `
+      <div class="bd-row"><span>${esc(lbl)}</span><span class="bar"><i style="width:${Math.round(pts / max * 100)}%"></i></span>
+      <span class="pts">${pts}/${max}</span><span class="val">${esc(val)}</span></div>`).join("")}</div>`;
+  }
+  return html;
+}
+
 function detailHTML(r){
   const flags = [];
   if (r.per < 3) flags.push("PER이 3배 미만이에요. 일회성 이익이 섞였는지 공시에서 확인하세요.");
   if (r.f) flags.push("금융·지주로 추정돼요. FCF 해석에 주의하세요.");
   if (r.capex === 0) flags.push("유형자산 취득액이 잡히지 않았어요. 계정명이 달라 누락됐을 수 있어요.");
-  return `<div class="detail"><table>
+  if (r.fy !== null && r.fy > 30) flags.push("FCF 수익률이 30%를 넘어요. 투자 지출이 누락됐는지 현금흐름표를 확인하세요.");
+  return `<div class="detail">${scoresHTML(r)}<table>
     <tr><td>최근 4분기 매출</td><td>${fmtEok(r.rev)}</td></tr>
     <tr><td>최근 4분기 영업이익</td><td class="${cls(r.op)}">${fmtEok(r.op)}</td></tr>
     <tr><td>최근 4분기 지배주주순이익</td><td>${fmtEok(r.ni)}</td></tr>
     <tr><td>영업활동현금흐름</td><td>${fmtEok(r.ocf)}</td></tr>
     <tr><td>유형자산 취득</td><td>${fmtEok(r.capex)}</td></tr>
+    <tr><td>무형자산 취득</td><td>${fmtEok(r.capexi)}</td></tr>
     <tr><td>FCF</td><td class="${cls(r.fcf)}">${fmtEok(r.fcf)}</td></tr>
     <tr><td>FCF 수익률</td><td>${fmtPct(r.fy)}</td></tr>
+    <tr><td>ROE</td><td>${r.roe === null ? "없음" : r.roe.toFixed(1) + "%"}</td></tr>
+    <tr><td>부채비율</td><td>${r.de === null ? "없음" : r.de.toFixed(0) + "%"}</td></tr>
     <tr><td>재무 기준</td><td>${esc(r.rep || "")} ${esc(r.fs || "")}</td></tr>
+    <tr><td>가격 지표 기준일</td><td>${esc(r.idt || "없음")}</td></tr>
   </table>
   ${flags.map(f => `<div class="flag">${f}</div>`).join("")}
   ${checksHTML(r)}
@@ -285,6 +362,25 @@ function detailHTML(r){
     <a href="https://m.stock.naver.com/domestic/stock/${r.c}/total" target="_blank" rel="noopener">네이버 증권에서 보기</a>
     <a href="https://m.stock.naver.com/domestic/stock/${r.c}/finance/annual" target="_blank" rel="noopener">재무 추이 보기</a>
   </div></div>`;
+}
+
+function bigNum(r){
+  if (cond.mode === "V") return `<span class="per">${r.per === null ? "-" : r.per.toFixed(1)}<span>PER</span></span>`;
+  const M = MODES[cond.mode];
+  return `<span class="per">${r[M.key]}<span>${M.label}점수</span></span>`;
+}
+function num(v, suffix, digits = 1){ return v === null || v === undefined ? "-" : v.toFixed(digits) + suffix; }
+function subLine(r){
+  if (cond.mode === "L") return `
+    <span>ROE <b>${num(r.roe, "%")}</b></span><span>부채 ${num(r.de, "%", 0)}</span><span>PER ${num(r.per, "")}</span>`;
+  if (cond.mode === "S") return `
+    <span>20일 <b class="${cls(r.r20)}">${fmtPct(r.r20)}</b></span><span>20일선 ${fmtPct(r.g20)}</span><span>거래량 ${num(r.vr, "배", 2)}</span>`;
+  if (cond.mode === "D") return `
+    <span>거래대금 ${fmtEok(r.tv20)}</span><span>ATR ${num(r.atr, "%")}</span><span>당일 <b class="${cls(r.chg)}">${fmtPct(r.chg)}</b></span>`;
+  return `
+    <span>매출 <b class="${cls(r.rg)}">${fmtPct(r.rg)}</b></span>
+    <span>FCF <b class="${cls(r.fcf)}">${fmtEok(r.fcf)}</b></span>
+    <span>시총 ${fmtEok(r.cap)}</span>`;
 }
 
 function render(){
@@ -300,7 +396,12 @@ function render(){
   $("#count").textContent = rows.length.toLocaleString("ko-KR");
   $("#dropped").textContent = droppedCount ? `1층 탈락 ${droppedCount}개 제외됨` : "";
   if (!rows.length){
-    list.innerHTML = `<li class="state"><strong>조건에 맞는 종목이 없어요</strong>PER 상한을 올리거나 성장률 조건을 낮춰 보세요.</li>`;
+    const noScore = cond.mode !== "V" && !(meta.scored && meta.scored[cond.mode]);
+    list.innerHTML = noScore
+      ? `<li class="state"><strong>아직 채점된 종목이 없어요</strong>주간 실행(run_weekly.sh)과 평일 자동 갱신이 한 번씩 끝나면 점수가 채워져요.</li>`
+      : cond.mode !== "V"
+        ? `<li class="state"><strong>조건에 맞는 종목이 없어요</strong>최소 점수를 낮추거나 가치 조건을 미적용으로 바꿔 보세요.</li>`
+        : `<li class="state"><strong>조건에 맞는 종목이 없어요</strong>PER 상한을 올리거나 성장률 조건을 낮춰 보세요.</li>`;
     $("#morebtn").hidden = true;
     return;
   }
@@ -309,11 +410,9 @@ function render(){
     <li>
       <button type="button" class="item" data-code="${r.c}" aria-expanded="${openCode === r.c}">
         <span class="name">${esc(r.n)}<span class="tag">${r.m === "KOSPI" ? "코스피" : "코스닥"} ${r.c}</span></span>
-        <span class="per">${r.per.toFixed(1)}<span>PER</span></span>
+        ${bigNum(r)}
         <span class="sub">
-          <span>매출 <b class="${cls(r.rg)}">${fmtPct(r.rg)}</b></span>
-          <span>FCF <b class="${cls(r.fcf)}">${fmtEok(r.fcf)}</b></span>
-          <span>시총 ${fmtEok(r.cap)}</span>
+          ${subLine(r)}
           ${L1TEXT[r.l1] ? `<span class="badge b-${r.l1}">${L1TEXT[r.l1]}${r.l1 === "f" ? " " + r.ck.filter(x => x[1] === "f").length : ""}</span>` : ""}
         </span>
       </button>
@@ -365,6 +464,11 @@ document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click"
   update();
 }));
 $("#t-fcf").addEventListener("click", () => { cond.fcf = !cond.fcf; update(); });
+document.querySelectorAll("#modes button").forEach(b => b.addEventListener("click", () => { cond.mode = b.dataset.v; openCode = null; update(); }));
+const stepMin = d => { const m = cond.mode; cond.minS = Object.assign({}, cond.minS, {[m]: Math.min(100, Math.max(0, cond.minS[m] + d))}); update(); };
+$("#min-dn").addEventListener("click", () => stepMin(-5));
+$("#min-up").addEventListener("click", () => stepMin(5));
+$("#t-withv").addEventListener("click", () => { const m = cond.mode; cond.withV = Object.assign({}, cond.withV, {[m]: !cond.withV[m]}); update(); });
 document.querySelectorAll("#market button").forEach(b => b.addEventListener("click", () => { cond.market = b.dataset.v; update(); }));
 document.querySelectorAll("#l1 button").forEach(b => b.addEventListener("click", () => { cond.l1 = b.dataset.v; update(); }));
 $("#capmin").addEventListener("change", e => { cond.capmin = Math.max(0, Number(e.target.value) || 0); update(); });
