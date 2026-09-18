@@ -40,7 +40,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIN_PATH = os.path.join(ROOT, "data", "financials.json")
 CORP_CACHE = os.path.join(ROOT, "data", "corp_codes.json")
 CHECK_PATH = os.path.join(ROOT, "data", "checks.json")
-FIN_VERSION = 4  # 재무 레코드 구조가 바뀌면 올려서 재수집 (v4: 무형자산 취득 차감)
+FIN_VERSION = 5  # 재무 레코드 구조가 바뀌면 올려서 재수집 (v5: 투자활동현금흐름 추가)
 OUT_PATH = os.path.join(ROOT, "docs", "data", "screen.json")
 DART = "https://opendart.fss.or.kr/api"
 SLEEP = float(os.environ.get("DART_SLEEP", "0.15"))
@@ -92,6 +92,13 @@ ACCOUNTS = {
         "sj": ("BS",),
         "ids": ["ifrs-full_Liabilities", "ifrs_Liabilities"],
         "names": ["부채총계", "부채합계"],
+    },
+    "icf": {
+        "sj": ("CF",),
+        "ids": ["ifrs-full_CashFlowsFromUsedInInvestingActivities",
+                "ifrs_CashFlowsFromUsedInInvestingActivities"],
+        "names": ["투자활동현금흐름", "투자활동으로인한현금흐름", "투자활동으로인한순현금흐름",
+                  "투자활동순현금흐름", "투자활동으로부터의현금흐름"],
     },
     "capex_int": {
         "sj": ("CF",),
@@ -160,8 +167,8 @@ def load_listing(with_history=False):
             out[code] = {
                 "name": str(r["Name"]),
                 "market": str(r["Market"]),
-                "close": float(r.get("Close") or 0),
-                "marcap": float(r.get("Marcap") or 0),
+                "close": safe_float(r.get("Close")),   # 장중에는 '-'가 들어올 수 있음
+                "marcap": safe_float(r.get("Marcap")),
                 "dept": str(r.get("Dept") or "") if "Dept" in df.columns else "",
             }
         price_date = last_trading_date(fdr)
@@ -188,6 +195,14 @@ def load_listing(with_history=False):
     price_date = f"{day[:4]}-{day[4:6]}-{day[6:]}"
     log(f"pykrx 목록 {len(out)}개 ({price_date})")
     return out, price_date
+
+
+def safe_float(v):
+    """'-' 처럼 숫자가 아닌 값은 0으로 처리 (장중 종목목록 대응)"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def last_trading_date(fdr):
@@ -479,7 +494,7 @@ def build_record(corp_code, candidates):
     if not rows:
         return None
 
-    keys = ("revenue", "net_parent", "op", "ocf", "capex", "capex_int")
+    keys = ("revenue", "net_parent", "op", "ocf", "capex", "capex_int", "icf")
     latest = extract(rows)
     is_annual = reprt == "11011"
     if is_annual:
@@ -513,6 +528,8 @@ def build_record(corp_code, candidates):
         "ocf_ttm": vals["ocf"],
         "capex_ttm": capex,
         "capex_int_ttm": capex_int,
+        "icf_ttm": vals["icf"],
+        "netcf_ttm": None if vals["ocf"] is None or vals["icf"] is None else vals["ocf"] + vals["icf"],
         "fcf_ttm": fcf,
         "fcf_hist": fcf_history(arows, annual_year) if arows else [],
         "equity_parent": latest["equity_parent"][0],
@@ -811,19 +828,37 @@ def score_long(rec, l1, per, rg):
 
     hist = [v for _, v in rec.get("fcf_hist", []) if v is not None]
     plus = sum(1 for v in hist if v > 0)
-    pts = 20 if len(hist) >= 3 and plus == len(hist) else 10 if plus >= 2 else 0
-    items.append(["FCF 지속성", pts, 20, f"{len(hist)}년 중 {plus}년 플러스"])
+    pts = 15 if len(hist) >= 3 and plus == len(hist) else 8 if plus >= 2 else 0
+    items.append(["FCF 지속성", pts, 15, f"{len(hist)}년 중 {plus}년 플러스"])
 
     ocf = rec.get("ocf_ttm")
     cc = ocf / ni if ocf is not None and ni and ni > 0 else None
-    pts = 0 if cc is None else 15 if cc >= 1.0 else 8 if cc >= 0.7 else 0
-    items.append(["이익의 질", pts, 15, "-" if cc is None else f"영업CF가 순이익의 {cc:.2f}배"])
+    if cc is None:
+        pts, txt = 0, "-"
+    elif cc > 3.0:  # 운전자본 유입 등으로 영업CF가 과도하게 부풀려진 경우
+        pts, txt = 5, f"영업CF가 순이익의 {cc:.2f}배 (운전자본 효과 의심)"
+    elif cc >= 1.0:
+        pts, txt = 15, f"영업CF가 순이익의 {cc:.2f}배"
+    elif cc >= 0.7:
+        pts, txt = 8, f"영업CF가 순이익의 {cc:.2f}배"
+    else:
+        pts, txt = 0, f"영업CF가 순이익의 {cc:.2f}배"
+    items.append(["이익의 질", pts, 15, txt])
+
+    net = rec.get("netcf_ttm")
+    if net is None:
+        pts, txt = 0, "-"
+    elif net > 0:
+        pts, txt = 10, f"영업+투자 현금 {net / 1e8:,.0f}억"
+    else:
+        pts, txt = 0, f"영업+투자 현금 {net / 1e8:,.0f}억 (순유출)"
+    items.append(["순현금흐름", pts, 10, txt])
 
     pts = 0 if per is None else 10 if per <= 10 else 5 if per <= 15 else 0
     items.append(["밸류에이션", pts, 10, "-" if per is None else f"PER {per:.1f}"])
 
-    pts = 0 if rg is None else 10 if 0.05 < rg <= 0.30 else 5 if rg > 0 else 0
-    items.append(["매출 성장", pts, 10, "-" if rg is None else f"{rg * 100:+.1f}%" + (" (과열 의심)" if rg > 0.30 else "")])
+    pts = 0 if rg is None else 5 if 0.05 < rg <= 0.30 else 3 if rg > 0 else 0
+    items.append(["매출 성장", pts, 5, "-" if rg is None else f"{rg * 100:+.1f}%" + (" (과열 의심)" if rg > 0.30 else "")])
     return sum(i[1] for i in items), items
 
 
@@ -901,7 +936,7 @@ def run_prices():
     fin = load_json(FIN_PATH, {})
     checks = load_json(CHECK_PATH, {})
     fields = ["c", "n", "m", "f", "cap", "per", "rg", "fcf", "ocf", "capex", "ni", "rev", "rep", "fs",
-              "op", "l1", "ck", "capexi",
+              "op", "l1", "ck", "capexi", "icf", "netcf",
               "sL", "bL", "sS", "bS", "sD", "bD",
               "roe", "de", "px", "r20", "g20", "vr", "atr", "tv20", "tvr", "chg", "idt"]
     rows = []
@@ -932,6 +967,7 @@ def run_prices():
             eok(rec.get("fcf_ttm")), eok(rec.get("ocf_ttm")), eok(rec.get("capex_ttm")),
             eok(ni), eok(rec.get("rev_ttm")), rec.get("report"), rec.get("fs"),
             eok(rec.get("op_ttm")), l1, ck, eok(rec.get("capex_int_ttm")),
+            eok(rec.get("icf_ttm")), eok(rec.get("netcf_ttm")),
             sL, bL, sS, bS, sD, bD,
             pct(roe), pct(de, 0), g.get("close"), pct(g.get("r20")), pct(g.get("g20")),
             None if g.get("vr") is None else round(g["vr"], 2), pct(g.get("atr")),
@@ -940,6 +976,7 @@ def run_prices():
         ])
         reports[rec.get("report")] = reports.get(rec.get("report"), 0) + 1
 
+    fi = {k: i for i, k in enumerate(fields)}
     main_report = max(reports, key=reports.get) if reports else None
     out = {
         "meta": {
@@ -947,10 +984,8 @@ def run_prices():
             "price_date": price_date,
             "main_report": main_report,
             "count": len(rows),
-            "checked": sum(1 for r in rows if r[15] != "n"),
-            "scored": {"L": sum(1 for r in rows if r[17] is not None),
-                       "S": sum(1 for r in rows if r[19] is not None),
-                       "D": sum(1 for r in rows if r[21] is not None)},
+            "checked": sum(1 for r in rows if r[fi["l1"]] != "n"),
+            "scored": {k: sum(1 for r in rows if r[fi["s" + k]] is not None) for k in ("L", "S", "D")},
             "unit": "억원",
         },
         "fields": fields,
